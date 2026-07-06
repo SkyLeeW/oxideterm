@@ -3,9 +3,9 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    BackdropBlur, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
-    backdrop_blur_batch_signature, backdrop_blur_work_area,
+    BackdropBlur, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path,
+    PlatformAtlas, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Size, Underline, backdrop_blur_batch_signature, backdrop_blur_work_area,
 };
 use blade_graphics as gpu;
 use blade_graphics::traits::RenderEncoder;
@@ -1549,5 +1549,25 @@ impl RenderingParameters {
             ratios[2] * NORM13,
             ratios[3] * NORM24,
         ]
+    }
+}
+
+impl crate::platform::PlatformRenderer for BladeRenderer {
+    fn resize(&mut self, size: Size<DevicePixels>) -> anyhow::Result<()> {
+        self.update_drawable_size(size);
+        Ok(())
+    }
+
+    fn draw(&mut self, scene: &Scene) -> anyhow::Result<()> {
+        BladeRenderer::draw(self, scene);
+        Ok(())
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        self.sprite_atlas().clone()
+    }
+
+    fn gpu_specs(&self) -> anyhow::Result<Option<GpuSpecs>> {
+        Ok(Some(BladeRenderer::gpu_specs(self)))
     }
 }

@@ -1,4 +1,4 @@
-use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
+use super::{BoolExt, MacDisplay, MacWindowRenderer, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
@@ -48,11 +48,12 @@ use std::{
     ptr::{self, NonNull},
     rc::Rc,
     sync::{Arc, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
+const SOFTWARE_RENDERER_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
@@ -392,8 +393,9 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     blurred_view: Option<id>,
     display_link: Option<DisplayLink>,
-    renderer: renderer::Renderer,
+    renderer: MacWindowRenderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    last_software_frame: Option<Instant>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -689,7 +691,7 @@ impl MacWindow {
                 native_view: NonNull::new_unchecked(native_view),
                 blurred_view: None,
                 display_link: None,
-                renderer: renderer::new_renderer(
+                renderer: MacWindowRenderer::new(
                     renderer_context,
                     native_window as *mut _,
                     native_view as *mut _,
@@ -697,6 +699,7 @@ impl MacWindow {
                     false,
                 ),
                 request_frame_callback: None,
+                last_software_frame: None,
                 event_callback: None,
                 activate_callback: None,
                 resize_callback: None,
@@ -1471,15 +1474,17 @@ impl PlatformWindow for MacWindow {
 
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
-        this.renderer.draw(scene);
+        crate::platform::PlatformRenderer::draw(&mut this.renderer, scene).log_err();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.lock().renderer.sprite_atlas().clone()
+        crate::platform::PlatformRenderer::sprite_atlas(&self.0.lock().renderer)
     }
 
     fn gpu_specs(&self) -> Option<crate::GpuSpecs> {
-        None
+        crate::platform::PlatformRenderer::gpu_specs(&self.0.lock().renderer)
+            .log_err()
+            .flatten()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
@@ -2091,7 +2096,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
         ];
     }
 
-    lock.renderer.update_drawable_size(drawable_size);
+    crate::platform::PlatformRenderer::resize(&mut lock.renderer, drawable_size).log_err();
 
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
@@ -2122,7 +2127,7 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 
     let scale_factor = lock.scale_factor();
     let drawable_size = new_size.to_device_pixels(scale_factor);
-    lock.renderer.update_drawable_size(drawable_size);
+    crate::platform::PlatformRenderer::resize(&mut lock.renderer, drawable_size).log_err();
 
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
@@ -2155,6 +2160,18 @@ unsafe extern "C" fn step(view: *mut c_void) {
     let view = view as id;
     let window_state = unsafe { get_window_state(&*view) };
     let mut lock = window_state.lock();
+
+    if lock.renderer.is_software() {
+        let now = Instant::now();
+        if lock.last_software_frame.is_some_and(|last_frame| {
+            now.duration_since(last_frame) < SOFTWARE_RENDERER_FRAME_INTERVAL
+        }) {
+            return;
+        }
+        // CPU rendering repaints a full framebuffer, so it must not follow a
+        // display-link cadence meant for GPU-backed presentation.
+        lock.last_software_frame = Some(now);
+    }
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
         drop(lock);

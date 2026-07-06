@@ -204,7 +204,7 @@ impl WindowsWindowInner {
         let mut lock = self.state.borrow_mut();
         lock.logical_size = new_logical_size;
         if should_resize_renderer {
-            lock.renderer.resize(device_size).log_err();
+            crate::platform::PlatformRenderer::resize(&mut lock.renderer, device_size).log_err();
         }
         if let Some(mut callback) = lock.callbacks.resize.take() {
             drop(lock);

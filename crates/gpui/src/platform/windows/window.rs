@@ -842,11 +842,12 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.0.state.borrow_mut().renderer.draw(scene).log_err();
+        crate::platform::PlatformRenderer::draw(&mut self.0.state.borrow_mut().renderer, scene)
+            .log_err();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.state.borrow().renderer.sprite_atlas()
+        crate::platform::PlatformRenderer::sprite_atlas(&self.0.state.borrow().renderer)
     }
 
     fn get_raw_handle(&self) -> HWND {
@@ -854,7 +855,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.0.state.borrow().renderer.gpu_specs().log_err()
+        crate::platform::PlatformRenderer::gpu_specs(&self.0.state.borrow().renderer)
+            .log_err()
+            .flatten()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {

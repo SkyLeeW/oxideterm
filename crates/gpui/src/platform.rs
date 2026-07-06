@@ -20,6 +20,8 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+mod software;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -71,6 +73,7 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
+pub(crate) use software::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) use linux::*;
@@ -553,6 +556,16 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
+    }
+}
+
+/// Shared renderer surface used by platform windows before selecting a concrete backend.
+pub(crate) trait PlatformRenderer {
+    fn resize(&mut self, size: Size<DevicePixels>) -> Result<()>;
+    fn draw(&mut self, scene: &Scene) -> Result<()>;
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn gpu_specs(&self) -> Result<Option<GpuSpecs>> {
+        Ok(None)
     }
 }
 

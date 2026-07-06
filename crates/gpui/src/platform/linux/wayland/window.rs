@@ -11,6 +11,7 @@ use collections::HashMap;
 use futures::channel::oneshot::Receiver;
 
 use raw_window_handle as rwh;
+use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{Proxy, protocol::wl_surface};
@@ -685,7 +686,8 @@ impl WaylandWindowStatePtr {
                 state.scale = scale;
             }
             let device_bounds = state.bounds.to_device_pixels(state.scale);
-            state.renderer.update_drawable_size(device_bounds.size);
+            crate::platform::PlatformRenderer::resize(&mut state.renderer, device_bounds.size)
+                .log_err();
             (state.bounds.size, state.scale)
         };
 
@@ -1019,7 +1021,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        crate::platform::PlatformRenderer::draw(&mut state.renderer, scene).log_err();
     }
 
     fn completed_frame(&self) {
@@ -1029,7 +1031,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let state = self.borrow();
-        state.renderer.sprite_atlas().clone()
+        crate::platform::PlatformRenderer::sprite_atlas(&state.renderer)
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {
@@ -1095,7 +1097,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.borrow().renderer.gpu_specs().into()
+        crate::platform::PlatformRenderer::gpu_specs(&self.borrow().renderer)
+            .log_err()
+            .flatten()
     }
 }
 

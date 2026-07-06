@@ -181,9 +181,10 @@ fn main() {
         if let Err(err) = open_main_workspace_window(cx, ssh_launch, desktop_presence_menu) {
             eprintln!(
                 "OxideTerm could not open a native GPUI window: {err:#}\n\
-                 GPUI 0.2.2 does not expose a CPU renderer fallback. \
                  Try updating GPU drivers, disabling incompatible graphics layers, \
-                 or relaunching with OXIDETERM_RENDER_PROFILE=compatibility."
+                 relaunching with OXIDETERM_RENDER_PROFILE=compatibility, \
+                 or forcing the experimental software renderer with \
+                 OXIDETERM_RENDERER=software."
             );
             cx.quit();
         }
@@ -224,7 +225,7 @@ fn open_main_workspace_window(
             WorkspaceApp::new(window, cx, desktop_presence_rx).unwrap_or_else(|err| {
                 panic!(
                     "failed to initialize OxideTerm workspace: {err:#}\n\
-                     OxideTerm native uses GPUI's GPU-backed renderer. \
+                     OxideTerm native uses GPUI's native renderer. \
                      To retry with lightweight visual effects, launch with \
                      OXIDETERM_RENDER_PROFILE=compatibility."
                 )

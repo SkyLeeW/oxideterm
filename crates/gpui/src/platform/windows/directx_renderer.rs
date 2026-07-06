@@ -2259,3 +2259,21 @@ mod dxgi {
         ))
     }
 }
+
+impl crate::platform::PlatformRenderer for DirectXRenderer {
+    fn resize(&mut self, size: Size<DevicePixels>) -> Result<()> {
+        DirectXRenderer::resize(self, size)
+    }
+
+    fn draw(&mut self, scene: &Scene) -> Result<()> {
+        DirectXRenderer::draw(self, scene)
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        DirectXRenderer::sprite_atlas(self)
+    }
+
+    fn gpu_specs(&self) -> Result<Option<GpuSpecs>> {
+        DirectXRenderer::gpu_specs(self).map(Some)
+    }
+}

@@ -32,6 +32,7 @@ mod text_system;
 mod platform;
 mod window;
 mod window_appearance;
+mod window_renderer;
 
 use crate::{DevicePixels, Pixels, Size, px, size};
 use cocoa::{
@@ -51,6 +52,7 @@ pub(crate) use display_link::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
+pub(crate) use window_renderer::*;
 
 #[cfg(feature = "font-kit")]
 pub(crate) use text_system::*;

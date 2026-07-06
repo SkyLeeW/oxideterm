@@ -1092,10 +1092,14 @@ impl X11WindowStatePtr {
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
             if true {
-                state.renderer.update_drawable_size(size(
-                    DevicePixels(gpu_size.width as i32),
-                    DevicePixels(gpu_size.height as i32),
-                ));
+                crate::platform::PlatformRenderer::resize(
+                    &mut state.renderer,
+                    size(
+                        DevicePixels(gpu_size.width as i32),
+                        DevicePixels(gpu_size.height as i32),
+                    ),
+                )
+                .log_err();
                 resize_args = Some((state.content_size(), state.scale_factor));
             }
             if let Some(value) = state.last_sync_counter.take() {
@@ -1472,12 +1476,12 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        crate::platform::PlatformRenderer::draw(&mut inner.renderer, scene).log_err();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let inner = self.0.state.borrow();
-        inner.renderer.sprite_atlas().clone()
+        crate::platform::PlatformRenderer::sprite_atlas(&inner.renderer)
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {
@@ -1665,6 +1669,8 @@ impl PlatformWindow for X11Window {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.0.state.borrow().renderer.gpu_specs().into()
+        crate::platform::PlatformRenderer::gpu_specs(&self.0.state.borrow().renderer)
+            .log_err()
+            .flatten()
     }
 }

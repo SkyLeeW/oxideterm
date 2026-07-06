@@ -1847,3 +1847,19 @@ pub struct BackdropBlurPassParams {
     pub radius: f32,
     pub pad: f32,
 }
+
+impl crate::platform::PlatformRenderer for MetalRenderer {
+    fn resize(&mut self, size: Size<DevicePixels>) -> Result<()> {
+        self.update_drawable_size(size);
+        Ok(())
+    }
+
+    fn draw(&mut self, scene: &Scene) -> Result<()> {
+        MetalRenderer::draw(self, scene);
+        Ok(())
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn crate::PlatformAtlas> {
+        self.sprite_atlas().clone()
+    }
+}
