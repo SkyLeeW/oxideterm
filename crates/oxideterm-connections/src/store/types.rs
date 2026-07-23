@@ -119,6 +119,16 @@ pub struct ConnectionOptions {
     pub legacy_ssh_compatibility: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_connect_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nova_agent: Option<NovaAgentConnection>,
+}
+
+/// Nova Agent 保存连接只保留重新获取桥接授权所需的公开信息。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NovaAgentConnection {
+    pub base_url: String,
+    pub access_id: String,
+    pub pinned_certificate_der: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -620,6 +630,7 @@ pub struct SaveConnectionRequest {
     pub agent_forwarding: bool,
     pub legacy_ssh_compatibility: bool,
     pub post_connect_command: Option<String>,
+    pub nova_agent: Option<NovaAgentConnection>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::upstream_proxy::UpstreamProxyConfig;
+use crate::{NovaAgentAuthorization, WebSocketSshTunnel};
 use oxideterm_x11_forwarding::X11SshRequest;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +44,10 @@ pub struct SshConfig {
     pub x11_forwarding: Option<X11SshRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_connect_command: Option<String>,
+    #[serde(default, skip)]
+    pub websocket_tunnel: Option<WebSocketSshTunnel>,
+    #[serde(default, skip)]
+    pub nova_agent_authorization: Option<NovaAgentAuthorization>,
 }
 
 impl fmt::Debug for SshConfig {
@@ -69,6 +74,8 @@ impl fmt::Debug for SshConfig {
             .field("legacy_ssh_compatibility", &self.legacy_ssh_compatibility)
             .field("x11_forwarding", &self.x11_forwarding)
             .field("post_connect_command", &self.post_connect_command)
+            .field("websocket_tunnel", &self.websocket_tunnel)
+            .field("nova_agent_authorization", &self.nova_agent_authorization)
             .finish()
     }
 }
@@ -178,15 +185,25 @@ impl SshConfig {
             .proxy_command
             .as_ref()
             .map_or_else(String::new, ProxyCommandConfig::connection_key_suffix);
+        let websocket_tunnel_key = self
+            .websocket_tunnel
+            .as_ref()
+            .map_or_else(String::new, WebSocketSshTunnel::connection_key_suffix);
+        let nova_agent_key = self
+            .nova_agent_authorization
+            .as_ref()
+            .map_or_else(String::new, NovaAgentAuthorization::connection_key_suffix);
         format!(
-            "{}@{}:{}|{}{}{}{}",
+            "{}@{}:{}|{}{}{}{}{}{}",
             self.username,
             self.host,
             self.port,
             proxy_key,
             upstream_proxy_key,
             legacy_key,
-            proxy_command_key
+            proxy_command_key,
+            websocket_tunnel_key,
+            nova_agent_key,
         )
     }
 
@@ -197,6 +214,18 @@ impl SshConfig {
                 .proxy_chain
                 .as_ref()
                 .is_some_and(|chain| chain.iter().any(|hop| hop.auth.has_runtime_secret()))
+            || self.websocket_tunnel.is_some()
+            || self.nova_agent_authorization.is_some()
+    }
+
+    pub fn with_websocket_tunnel(mut self, tunnel: WebSocketSshTunnel) -> Self {
+        self.websocket_tunnel = Some(tunnel);
+        self
+    }
+
+    pub fn with_nova_agent_authorization(mut self, authorization: NovaAgentAuthorization) -> Self {
+        self.nova_agent_authorization = Some(authorization);
+        self
     }
 }
 
@@ -385,6 +414,8 @@ impl Default for SshConfig {
             legacy_ssh_compatibility: false,
             x11_forwarding: None,
             post_connect_command: None,
+            websocket_tunnel: None,
+            nova_agent_authorization: None,
         }
     }
 }

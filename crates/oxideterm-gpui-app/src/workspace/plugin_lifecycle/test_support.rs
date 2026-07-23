@@ -313,6 +313,7 @@ pub(super) fn test_connection_store_with_agent_connection(
             agent_forwarding: false,
             legacy_ssh_compatibility: false,
             post_connect_command: None,
+            nova_agent: None,
         })
         .unwrap();
     store

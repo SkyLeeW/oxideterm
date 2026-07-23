@@ -343,21 +343,33 @@ impl SshTransportClient {
     async fn connect_authenticated_connection(
         &self,
     ) -> Result<Arc<PooledSshConnection>, SshTransportError> {
+        let mut config = self.config.clone();
+        if let Some(authorization) = config.nova_agent_authorization.take() {
+            let tunnel = authorization
+                .request_websocket_tunnel()
+                .await
+                .map_err(|error| SshTransportError::ConnectionFailed(error.to_string()))?;
+            config.websocket_tunnel = Some(tunnel);
+        }
         let remote_forward_handler = Arc::new(RwLock::new(None));
         let x11_forward_handler = Arc::new(RwLock::new(None));
-        if self
-            .config
+        if config
             .proxy_chain
             .as_ref()
             .is_some_and(|chain| !chain.is_empty())
         {
+            if config.websocket_tunnel.is_some() {
+                return Err(SshTransportError::ConnectionFailed(
+                    "SSH-over-WSS cannot be combined with a proxy chain".to_string(),
+                ));
+            }
             return self
                 .connect_authenticated_proxy_connection(remote_forward_handler, x11_forward_handler)
                 .await;
         }
 
         self.connect_direct_authenticated_handle(
-            &self.config,
+            &config,
             remote_forward_handler.clone(),
             x11_forward_handler.clone(),
         )
@@ -388,7 +400,15 @@ impl SshTransportClient {
             legacy_ssh_compatibility = config.legacy_ssh_compatibility,
             "SSH direct connection starting"
         );
-        let stream: BoxedSshForwardStream = if let Some(proxy_command) = &config.proxy_command {
+        let stream: BoxedSshForwardStream = if let Some(tunnel) = &config.websocket_tunnel {
+            if config.upstream_proxy.is_some() || config.proxy_command.is_some() {
+                return Err(SshTransportError::ConnectionFailed(
+                    "SSH-over-WSS cannot be combined with an upstream proxy or ProxyCommand"
+                        .to_string(),
+                ));
+            }
+            Box::new(tunnel.connect().await?)
+        } else if let Some(proxy_command) = &config.proxy_command {
             if config.upstream_proxy.is_some() {
                 return Err(SshTransportError::ConnectionFailed(
                     "ProxyCommand cannot be combined with an upstream proxy".to_string(),

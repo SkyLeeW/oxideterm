@@ -16,7 +16,8 @@ use super::{
         clear_current_connection_field, connection_field_is_selected, current_connection_field,
         default_auth_tab_for_family, insert_text_into_current_connection_field,
         key_source_from_tab, new_connection_form_mode, next_connection_field,
-        next_jump_connection_field, select_current_connection_field, text_from_keystroke,
+        next_jump_connection_field, next_nova_connection_field, select_current_connection_field,
+        text_from_keystroke,
     },
     ssh_flow::SshConnectionIntent,
 };
@@ -210,7 +211,9 @@ impl WorkspaceApp {
                 true
             }
             "tab" => {
-                form.focused_field = if let Some(jump_form) = form.jump_server_form.as_ref() {
+                form.focused_field = if form.uses_nova_agent() {
+                    next_nova_connection_field(form.focused_field, !modifiers.shift)
+                } else if let Some(jump_form) = form.jump_server_form.as_ref() {
                     next_jump_connection_field(
                         form.focused_field,
                         jump_form.auth_tab,

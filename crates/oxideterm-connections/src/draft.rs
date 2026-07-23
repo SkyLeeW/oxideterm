@@ -198,6 +198,7 @@ pub fn save_request_from_draft(
         legacy_ssh_compatibility: draft.legacy_ssh_compatibility,
         post_connect_command: (!draft.post_connect_command.trim().is_empty())
             .then(|| draft.post_connect_command.trim().to_string()),
+        nova_agent: None,
     })
 }
 

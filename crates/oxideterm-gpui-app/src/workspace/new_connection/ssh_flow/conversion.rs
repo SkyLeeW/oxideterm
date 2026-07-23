@@ -539,6 +539,17 @@ pub(super) fn zeroizing_secret_clone(value: &str) -> zeroize::Zeroizing<String> 
     zeroize::Zeroizing::new(value.to_string())
 }
 
+/// normalize_nova_two_factor_code 清理复制产生的首尾空白并校验 Agent 使用的六位 TOTP 格式。
+pub(super) fn normalize_nova_two_factor_code(
+    value: &str,
+) -> Result<zeroize::Zeroizing<String>, String> {
+    let code = value.trim();
+    if code.len() != 6 || !code.as_bytes().iter().all(u8::is_ascii_digit) {
+        return Err("Agent 2FA 验证码必须是当前 6 位数字".to_string());
+    }
+    Ok(zeroize::Zeroizing::new(code.to_string()))
+}
+
 pub(super) fn zeroizing_non_empty_secret(value: &str) -> Option<zeroize::Zeroizing<String>> {
     (!value.is_empty()).then(|| zeroizing_secret_clone(value))
 }

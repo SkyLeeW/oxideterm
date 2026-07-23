@@ -15,11 +15,13 @@ mod connection_trace;
 mod host_key;
 mod local_paths;
 mod monitor;
+mod nova_access;
 mod reconnect;
 mod router;
 mod session_tree_plan;
 mod transport;
 mod upstream_proxy;
+mod websocket_tunnel;
 
 pub use capability::{
     SshAlgorithmOffer, SshCapabilityLayer, SshCapabilityLimitation, SshCapabilityReport,
@@ -40,8 +42,10 @@ pub use connection_trace::{
     parse_algorithm_negotiation_error, server_offers_legacy_cipher, server_only_offers_ssh_rsa,
 };
 pub use host_key::{
-    HostKeyStatus, check_host_key, check_host_key_with_upstream_proxy, remove_host_key,
+    HostKeyStatus, check_host_key, check_host_key_via_websocket_tunnel,
+    check_host_key_with_upstream_proxy, remove_host_key,
 };
+pub use nova_access::{NovaAgentAuthorization, NovaSshAccessBundle, NovaSshAccessError};
 pub use oxideterm_connection_monitor::ConnectionPoolMonitorStats;
 pub use oxideterm_sftp::{
     DEFAULT_SFTP_CONCURRENT_TRANSFERS, DEFAULT_SFTP_DIRECTORY_PARALLELISM, FileInfo, FileType,
@@ -77,3 +81,4 @@ pub use upstream_proxy::{
     dial_initial_tcp, parse_http_proxy_value, parse_socks5_proxy_value, probe_upstream_proxy_route,
     socks5_proxy_from_env, upstream_proxy_from_env,
 };
+pub use websocket_tunnel::{WebSocketSshTunnel, WssSshStream};

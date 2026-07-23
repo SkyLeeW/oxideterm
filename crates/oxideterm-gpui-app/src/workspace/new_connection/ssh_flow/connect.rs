@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use super::*;
+use oxideterm_connections::SecretString;
+use oxideterm_ssh::{NovaAgentAuthorization, NovaSshAccessBundle};
 
 impl WorkspaceApp {
     pub(super) fn save_after_open_request_for_connect_intent(
@@ -46,6 +48,97 @@ impl WorkspaceApp {
         let Some(form) = self.new_connection_form.as_mut() else {
             return None;
         };
+        let nova_authorization = if let Some(saved_access) = form.nova_saved_access.clone() {
+            let two_factor_code = match normalize_nova_two_factor_code(&form.nova_two_factor_code) {
+                Ok(code) => code,
+                Err(error) => {
+                    form.error = Some(error);
+                    cx.notify();
+                    return None;
+                }
+            };
+            match NovaAgentAuthorization::from_persisted(
+                &saved_access.base_url,
+                &saved_access.access_id,
+                two_factor_code,
+                saved_access.pinned_certificate_der,
+            ) {
+                Ok(authorization) => Some(authorization),
+                Err(error) => {
+                    form.error = Some(error.to_string());
+                    cx.notify();
+                    return None;
+                }
+            }
+        } else if !form.nova_access_text.trim().is_empty() {
+            let bundle = match NovaSshAccessBundle::parse(&form.nova_access_text) {
+                Ok(bundle) => bundle,
+                Err(error) => {
+                    form.error = Some(error.to_string());
+                    cx.notify();
+                    return None;
+                }
+            };
+            if form.nova_private_key_passphrase.is_empty() {
+                form.error = Some("Nova SSH 接入需要私钥保护口令".to_string());
+                cx.notify();
+                return None;
+            }
+            let two_factor_code = match normalize_nova_two_factor_code(&form.nova_two_factor_code) {
+                Ok(code) => code,
+                Err(error) => {
+                    form.error = Some(error);
+                    cx.notify();
+                    return None;
+                }
+            };
+            let key_name = bundle
+                .agent_name
+                .as_ref()
+                .map(|name| format!("Nova Agent {name}"));
+            let managed_key = match self.connection_store.ensure_managed_ssh_key_from_text(
+                SecretString::from(bundle.private_key.as_str()),
+                key_name,
+                Some(SecretString::from(form.nova_private_key_passphrase.clone())),
+            ) {
+                Ok(key) => key,
+                Err(error) => {
+                    form.error = Some(format!("导入 Nova SSH 私钥失败: {error}"));
+                    cx.notify();
+                    return None;
+                }
+            };
+            let host = match bundle.base_url.host_str() {
+                Some(host) => host.to_string(),
+                None => {
+                    form.error = Some("Nova SSH 接入串缺少 Agent 主机地址".to_string());
+                    cx.notify();
+                    return None;
+                }
+            };
+            form.host = host;
+            form.port = bundle.target_port.to_string();
+            form.username = bundle.username.clone();
+            if form.name.trim().is_empty() {
+                form.name = bundle
+                    .agent_name
+                    .clone()
+                    .unwrap_or_else(|| format!("Nova Agent {}", form.host));
+            }
+            form.auth_tab = SshAuthTab::ManagedKey;
+            form.managed_key_id = managed_key.id;
+            // 中文说明: 新建 Nova 保存连接将口令写入本机受保护密钥库，配置文件不会保存该值。
+            form.passphrase = form.nova_private_key_passphrase.clone();
+            form.save_connection = true;
+            Some(NovaAgentAuthorization::new(
+                bundle.base_url,
+                bundle.access_id,
+                two_factor_code,
+                bundle.pinned_cert_der,
+            ))
+        } else {
+            None
+        };
         let host = form.host.trim().to_string();
         let username = form.username.trim().to_string();
         let port = form.port.trim().parse::<u16>().ok();
@@ -81,11 +174,40 @@ impl WorkspaceApp {
                     cx.notify();
                     return None;
                 }
-                // The connection config carries only the managed-key reference; the
-                // private key remains owned by the local managed keychain resolver.
+                let passphrase = if form.nova_saved_access.is_some() && form.passphrase.is_empty() {
+                    let Some(saved_connection_id) = self.editing_saved_connection_id.as_deref()
+                    else {
+                        form.error = Some("Nova SSH 保存连接缺少本机凭据引用".to_string());
+                        cx.notify();
+                        return None;
+                    };
+                    match self
+                        .connection_store
+                        .get_connection_passphrase(saved_connection_id)
+                    {
+                        Ok(Some(passphrase)) => passphrase.into_zeroizing(),
+                        Ok(None) => {
+                            form.error = Some(
+                                "Nova SSH 私钥保护口令不在本机受保护存储中，请重新导入接入串"
+                                    .to_string(),
+                            );
+                            cx.notify();
+                            return None;
+                        }
+                        Err(error) => {
+                            form.error = Some(format!("读取 Nova SSH 本机凭据失败: {error}"));
+                            cx.notify();
+                            return None;
+                        }
+                    }
+                } else {
+                    zeroizing_non_empty_secret(&form.passphrase)
+                        .unwrap_or_else(|| zeroize::Zeroizing::new(String::new()))
+                };
+                // 中文说明: 连接配置只保留托管密钥引用，私钥与口令分别由受保护存储和运行时对象持有。
                 AuthMethod::managed_key_secret(
                     form.managed_key_id.trim().to_string(),
-                    zeroizing_non_empty_secret(&form.passphrase),
+                    (!passphrase.is_empty()).then_some(passphrase),
                 )
             }
             SshAuthTab::Certificate => {
@@ -134,6 +256,7 @@ impl WorkspaceApp {
             strict_host_key_checking: true,
             post_connect_command: (!form.post_connect_command.trim().is_empty())
                 .then(|| form.post_connect_command.trim().to_string()),
+            nova_agent_authorization: nova_authorization,
             ..SshConfig::default()
         };
         let title = if form.name.trim().is_empty() {

@@ -1,8 +1,9 @@
 use std::fmt;
 
 use oxideterm_connections::{
-    AuthType, ConnectionInfo, PrivilegeCredentialKind, SavedUpstreamProxyProtocol,
-    TransportUsernameTransition, transport_port_replacement, transport_username_transition,
+    AuthType, ConnectionInfo, NovaAgentConnection, PrivilegeCredentialKind,
+    SavedUpstreamProxyProtocol, TransportUsernameTransition, transport_port_replacement,
+    transport_username_transition,
 };
 pub(in crate::workspace) use oxideterm_connections::{
     ConnectionTransport as NewConnectionTransport, RDP_DEFAULT_PORT_TEXT, SSH_DEFAULT_PORT_TEXT,
@@ -159,6 +160,9 @@ pub(in crate::workspace) enum NewConnectionUpstreamProxyAuth {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(in crate::workspace) enum NewConnectionField {
     Name,
+    NovaAccessText,
+    NovaPrivateKeyPassphrase,
+    NovaTwoFactorCode,
     Host,
     Port,
     Username,
@@ -316,6 +320,10 @@ impl NewConnectionProxyHop {
 pub(in crate::workspace) struct NewConnectionForm {
     pub(in crate::workspace) transport: NewConnectionTransport,
     pub(in crate::workspace) name: String,
+    pub(in crate::workspace) nova_access_text: String,
+    pub(in crate::workspace) nova_private_key_passphrase: String,
+    pub(in crate::workspace) nova_two_factor_code: String,
+    pub(in crate::workspace) nova_saved_access: Option<NovaAgentConnection>,
     pub(in crate::workspace) host: String,
     pub(in crate::workspace) port: String,
     pub(in crate::workspace) username: String,
@@ -377,6 +385,16 @@ impl fmt::Debug for NewConnectionForm {
             .debug_struct("NewConnectionForm")
             .field("transport", &self.transport)
             .field("name", &self.name)
+            .field("nova_access_text", &"[redacted access bundle]")
+            .field("nova_private_key_passphrase", &"[redacted secret]")
+            .field("nova_two_factor_code", &"[redacted secret]")
+            .field(
+                "nova_saved_access",
+                &self
+                    .nova_saved_access
+                    .as_ref()
+                    .map(|_| "[saved Nova access]"),
+            )
             .field("host", &self.host)
             .field("port", &self.port)
             .field("username", &self.username)
@@ -445,6 +463,10 @@ impl Default for NewConnectionForm {
         Self {
             transport: NewConnectionTransport::Ssh,
             name: String::new(),
+            nova_access_text: String::new(),
+            nova_private_key_passphrase: String::new(),
+            nova_two_factor_code: String::new(),
+            nova_saved_access: None,
             host: String::new(),
             port: SSH_DEFAULT_PORT_TEXT.to_string(),
             username: "root".to_string(),
@@ -695,6 +717,37 @@ pub(in crate::workspace) fn next_connection_field(
     fields[next]
 }
 
+impl NewConnectionForm {
+    /// uses_nova_agent 标识表单是否正在创建或重新授权 Nova SSH 接入。
+    pub(in crate::workspace) fn uses_nova_agent(&self) -> bool {
+        !self.nova_access_text.trim().is_empty() || self.nova_saved_access.is_some()
+    }
+}
+
+/// 在 Nova 接入模式中仅遍历实际可见的三个输入字段。
+pub(in crate::workspace) fn next_nova_connection_field(
+    field: NewConnectionField,
+    forward: bool,
+) -> NewConnectionField {
+    let fields = [
+        NewConnectionField::NovaAccessText,
+        NewConnectionField::NovaPrivateKeyPassphrase,
+        NewConnectionField::NovaTwoFactorCode,
+    ];
+    let index = fields
+        .iter()
+        .position(|candidate| *candidate == field)
+        .unwrap_or(0);
+    let next = if forward {
+        (index + 1) % fields.len()
+    } else if index == 0 {
+        fields.len() - 1
+    } else {
+        index - 1
+    };
+    fields[next]
+}
+
 pub(in crate::workspace) fn next_jump_connection_field(
     field: NewConnectionField,
     auth_tab: SshAuthTab,
@@ -759,6 +812,9 @@ pub(in crate::workspace) fn current_connection_field_mut(
 ) -> &mut String {
     match form.focused_field {
         NewConnectionField::Name => &mut form.name,
+        NewConnectionField::NovaAccessText => &mut form.nova_access_text,
+        NewConnectionField::NovaPrivateKeyPassphrase => &mut form.nova_private_key_passphrase,
+        NewConnectionField::NovaTwoFactorCode => &mut form.nova_two_factor_code,
         NewConnectionField::Host => &mut form.host,
         NewConnectionField::Port => &mut form.port,
         NewConnectionField::Username => &mut form.username,
@@ -841,6 +897,9 @@ pub(in crate::workspace) fn current_connection_field_mut(
 pub(in crate::workspace) fn current_connection_field(form: &NewConnectionForm) -> &str {
     match form.focused_field {
         NewConnectionField::Name => &form.name,
+        NewConnectionField::NovaAccessText => &form.nova_access_text,
+        NewConnectionField::NovaPrivateKeyPassphrase => &form.nova_private_key_passphrase,
+        NewConnectionField::NovaTwoFactorCode => &form.nova_two_factor_code,
         NewConnectionField::Host => &form.host,
         NewConnectionField::Port => &form.port,
         NewConnectionField::Username => &form.username,

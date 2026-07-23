@@ -189,6 +189,10 @@ impl ConnectionStore {
         // Tauri config tails such as compression/term_type from being dropped.
         options.agent_forwarding = request.agent_forwarding;
         options.legacy_ssh_compatibility = request.legacy_ssh_compatibility;
+        if let Some(nova_agent) = request.nova_agent {
+            // Nova 元数据不含私钥或授权码，仅在首次 Nova 保存及显式迁移时写入。
+            options.nova_agent = Some(nova_agent);
+        }
         let auth = self.materialize_auth(request.auth, existing_auth.as_ref())?;
         let proxy_chain = self.materialize_proxy_chain(request.proxy_chain)?;
         let upstream_proxy = self.materialize_upstream_proxy_policy(
@@ -1027,6 +1031,35 @@ impl ConnectionStore {
         name: Option<String>,
         passphrase: Option<SecretString>,
     ) -> Result<ManagedSshKeyInfo> {
+        self.create_managed_ssh_key(
+            private_key,
+            name,
+            passphrase,
+            ManagedSshKeyOrigin::PastedText,
+            "Managed SSH Key",
+        )
+    }
+
+    /// ensure_managed_ssh_key_from_text 导入私钥，或在公钥指纹一致时复用已有托管记录。
+    pub fn ensure_managed_ssh_key_from_text(
+        &mut self,
+        private_key: SecretString,
+        name: Option<String>,
+        passphrase: Option<SecretString>,
+    ) -> Result<ManagedSshKeyInfo> {
+        // 先解密并计算公钥指纹，确保只能复用与本次输入完全对应的密钥。
+        let fingerprint = {
+            let decoded_key = decode_managed_private_key(&private_key, passphrase.as_ref())?;
+            fingerprint_public_key(decoded_key.public_key())
+        };
+        if let Some(existing) = self
+            .data
+            .managed_ssh_keys
+            .iter()
+            .find(|key| key.fingerprint == fingerprint)
+        {
+            return Ok(ManagedSshKeyInfo::from(existing));
+        }
         self.create_managed_ssh_key(
             private_key,
             name,

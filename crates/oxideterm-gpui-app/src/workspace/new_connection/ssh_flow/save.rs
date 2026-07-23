@@ -173,11 +173,13 @@ impl WorkspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.submit_new_connection_form_with_action(
+        let action = normalize_new_connection_submit_action(
+            self.new_connection_form
+                .as_ref()
+                .map(|form| form.nova_access_text.as_str()),
             NewConnectionSubmitAction::SaveAndConnect,
-            window,
-            cx,
         );
+        self.submit_new_connection_form_with_action(action, window, cx);
     }
 
     pub(in crate::workspace) fn submit_new_connection_form_with_action(
@@ -186,6 +188,13 @@ impl WorkspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Nova 接入包含一次性 2FA，任何按钮或快捷键都只能执行即时连接，不能进入普通保存链路。
+        let action = normalize_new_connection_submit_action(
+            self.new_connection_form
+                .as_ref()
+                .map(|form| form.nova_access_text.as_str()),
+            action,
+        );
         if self
             .new_connection_form
             .as_ref()
@@ -272,7 +281,9 @@ impl WorkspaceApp {
                 }
                 NewConnectionSubmitAction::Connect => {
                     if let Some(form) = self.new_connection_form.as_mut() {
-                        form.save_connection = false;
+                        if !form.uses_nova_agent() {
+                            form.save_connection = false;
+                        }
                     }
                 }
             }
@@ -856,7 +867,12 @@ impl WorkspaceApp {
             return;
         };
         self.prepare_modal_interaction_boundary();
-        self.new_connection_form = Some(form_from_saved_connection(&conn, error));
+        let mut form = form_from_saved_connection(&conn, error);
+        if form.uses_nova_agent() {
+            // Nova 保存连接重新打开时只收集新的 2FA，私钥口令仍由本机受保护存储提供。
+            form.focused_field = NewConnectionField::NovaTwoFactorCode;
+        }
+        self.new_connection_form = Some(form);
         self.editing_saved_connection_id = Some(id.to_string());
         self.editing_saved_connection_connect_after_save_node_id = None;
         self.duplicating_saved_connection_id = None;
@@ -1167,12 +1183,21 @@ impl WorkspaceApp {
         let worker_title = title;
         std::thread::spawn(move || {
             let status = match tokio::runtime::Runtime::new() {
-                Ok(runtime) => runtime.block_on(check_host_key_with_upstream_proxy(
-                    &host,
-                    port,
-                    10,
-                    upstream_proxy.as_ref(),
-                )),
+                Ok(runtime) => runtime.block_on(async {
+                    if let Some(authorization) = worker_config.nova_agent_authorization.clone() {
+                        match authorization.request_websocket_tunnel().await {
+                            Ok(tunnel) => {
+                                check_host_key_via_websocket_tunnel(&host, port, &tunnel, 10).await
+                            }
+                            Err(error) => HostKeyStatus::Error {
+                                message: error.to_string(),
+                            },
+                        }
+                    } else {
+                        check_host_key_with_upstream_proxy(&host, port, 10, upstream_proxy.as_ref())
+                            .await
+                    }
+                }),
                 Err(error) => HostKeyStatus::Error {
                     message: format!("failed to initialize SSH runtime: {error}"),
                 },
@@ -1191,6 +1216,18 @@ fn saved_connection_for_open(store: &ConnectionStore, id: &str) -> Option<SavedC
     store.get(id).cloned()
 }
 
+/// 统一 Nova 表单的提交语义，避免快捷键或旧按钮绕过即时连接约束。
+fn normalize_new_connection_submit_action(
+    nova_access_text: Option<&str>,
+    requested: NewConnectionSubmitAction,
+) -> NewConnectionSubmitAction {
+    if nova_access_text.is_some_and(|value| !value.trim().is_empty()) {
+        NewConnectionSubmitAction::Connect
+    } else {
+        requested
+    }
+}
+
 #[cfg(test)]
 mod saved_connection_open_tests {
     use super::*;
@@ -1204,5 +1241,35 @@ mod saved_connection_open_tests {
         let store = ConnectionStore::load(path).expect("empty connection store");
 
         assert!(saved_connection_for_open(&store, "removed-connection").is_none());
+    }
+}
+
+#[cfg(test)]
+mod nova_submit_action_tests {
+    use super::*;
+
+    #[test]
+    fn nova_submit_always_uses_connect_without_saving() {
+        for requested in [
+            NewConnectionSubmitAction::Connect,
+            NewConnectionSubmitAction::Save,
+            NewConnectionSubmitAction::SaveAndConnect,
+        ] {
+            assert_eq!(
+                normalize_new_connection_submit_action(Some(" nova-access "), requested),
+                NewConnectionSubmitAction::Connect
+            );
+        }
+    }
+
+    #[test]
+    fn regular_submit_keeps_requested_action() {
+        assert_eq!(
+            normalize_new_connection_submit_action(
+                Some("  "),
+                NewConnectionSubmitAction::SaveAndConnect
+            ),
+            NewConnectionSubmitAction::SaveAndConnect
+        );
     }
 }

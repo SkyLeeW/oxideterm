@@ -8,6 +8,7 @@ version.workspace = true
 base64.workspace = true
 dashmap.workspace = true
 dirs.workspace = true
+futures-util.workspace = true
 oxideterm-backend-classification = { path = "../oxideterm-backend-classification" }
 oxideterm-connection-monitor = { path = "../oxideterm-connection-monitor" }
 oxideterm-portable-runtime = { path = "../oxideterm-portable-runtime" }
@@ -15,14 +16,19 @@ oxideterm-sftp = { path = "../oxideterm-sftp" }
 oxideterm-topology = { path = "../oxideterm-topology" }
 oxideterm-x11-forwarding = { path = "../oxideterm-x11-forwarding" }
 parking_lot.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
 russh = { path = "../russh" }
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 signature.workspace = true
 ssh-encoding.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tracing.workspace = true
+url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 

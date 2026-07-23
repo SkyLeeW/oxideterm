@@ -2447,6 +2447,9 @@ fn new_connection_field_value(
 ) -> Option<&str> {
     Some(match field {
         NewConnectionField::Name => &form.name,
+        NewConnectionField::NovaAccessText => &form.nova_access_text,
+        NewConnectionField::NovaPrivateKeyPassphrase => &form.nova_private_key_passphrase,
+        NewConnectionField::NovaTwoFactorCode => &form.nova_two_factor_code,
         NewConnectionField::Host => &form.host,
         NewConnectionField::Port => &form.port,
         NewConnectionField::Username => &form.username,
@@ -2484,6 +2487,9 @@ fn connection_field_value_mut(
 ) -> &mut String {
     match field {
         NewConnectionField::Name => &mut form.name,
+        NewConnectionField::NovaAccessText => &mut form.nova_access_text,
+        NewConnectionField::NovaPrivateKeyPassphrase => &mut form.nova_private_key_passphrase,
+        NewConnectionField::NovaTwoFactorCode => &mut form.nova_two_factor_code,
         NewConnectionField::Host => &mut form.host,
         NewConnectionField::Port => &mut form.port,
         NewConnectionField::Username => &mut form.username,

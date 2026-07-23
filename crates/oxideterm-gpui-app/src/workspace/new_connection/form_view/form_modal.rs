@@ -10,6 +10,7 @@ impl WorkspaceApp {
         let Some(form) = self.new_connection_form.as_ref() else {
             return div().into_any_element();
         };
+        let nova_mode = form.uses_nova_agent();
         let theme = self.tokens.ui;
         let mode = new_connection_form_mode(
             self.editing_saved_connection_id.as_deref(),
@@ -55,8 +56,11 @@ impl WorkspaceApp {
         let remote_desktop_mode = remote_desktop_protocol.is_some();
         let ssh_submission_mode =
             !local_transport_mode && !remote_desktop_mode && !wsl_graphics_mode;
-        let shows_transport_selector =
-            !prompt_mode && !duplicate_mode && !edit_properties_mode && !drill_down_mode;
+        let shows_transport_selector = !prompt_mode
+            && !duplicate_mode
+            && !edit_properties_mode
+            && !drill_down_mode
+            && !nova_mode;
         let title = if drill_down_mode {
             self.i18n.t("ssh.drill_down.title")
         } else if prompt_mode {
@@ -129,6 +133,10 @@ impl WorkspaceApp {
                 && form.port.trim().parse::<u16>().is_ok_and(|port| port > 0)
         } else if wsl_graphics_mode {
             true
+        } else if nova_mode {
+            !form.nova_two_factor_code.is_empty()
+                && (form.nova_saved_access.is_some()
+                    || !form.nova_private_key_passphrase.is_empty())
         } else {
             !form.host.trim().is_empty()
                 && !form.username.trim().is_empty()
@@ -237,49 +245,69 @@ impl WorkspaceApp {
                                 .when(!prompt_mode && !drill_down_mode, |content| {
                                     content
                                         .child(self.render_connection_field(
-                                            self.i18n.t("ssh.form.name"),
-                                            &form.name,
-                                            self.i18n.t("ssh.form.name_placeholder"),
-                                            NewConnectionField::Name,
-                                            false,
+                                            "Nova SSH 接入串".to_string(),
+                                            &form.nova_access_text,
+                                            "粘贴 Agent 管理页生成的 Base64 接入串".to_string(),
+                                            NewConnectionField::NovaAccessText,
+                                            true,
                                             cx,
                                         ))
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_row()
-                                                .gap(px(self.tokens.metrics.form_host_port_gap))
-                                                .child(div().flex_1().child(
-                                                    self.render_connection_field(
-                                                        self.i18n.t("ssh.form.host"),
-                                                        &form.host,
-                                                        self.i18n.t("ssh.form.host_placeholder"),
-                                                        NewConnectionField::Host,
-                                                        false,
-                                                        cx,
-                                                    ),
+                                        .when(!form.nova_access_text.trim().is_empty(), |content| {
+                                            content
+                                                .child(self.render_connection_field(
+                                                    "私钥保护口令".to_string(),
+                                                    &form.nova_private_key_passphrase,
+                                                    "签发接入串时设置的口令".to_string(),
+                                                    NewConnectionField::NovaPrivateKeyPassphrase,
+                                                    true,
+                                                    cx,
                                                 ))
-                                                .child(
-                                                    div()
-                                                        .w(px(self.tokens.metrics.form_port_width))
-                                                        .child(self.render_connection_field(
-                                                            self.i18n.t("ssh.form.port"),
-                                                            &form.port,
+                                                .child(self.render_connection_field(
+                                                    "Agent 2FA 验证码".to_string(),
+                                                    &form.nova_two_factor_code,
+                                                    "当前 6 位验证码；仅用于本次连接".to_string(),
+                                                    NewConnectionField::NovaTwoFactorCode,
+                                                    true,
+                                                    cx,
+                                                ))
+                                        })
+                                        .when(!nova_mode, |content| {
+                                            content
+                                                .child(self.render_connection_field(
+                                                    self.i18n.t("ssh.form.name"), &form.name,
+                                                    self.i18n.t("ssh.form.name_placeholder"),
+                                                    NewConnectionField::Name, false, cx,
+                                                ))
+                                                .child(div().flex().flex_row()
+                                                    .gap(px(self.tokens.metrics.form_host_port_gap))
+                                                    .child(div().flex_1().child(self.render_connection_field(
+                                                        self.i18n.t("ssh.form.host"), &form.host,
+                                                        self.i18n.t("ssh.form.host_placeholder"),
+                                                        NewConnectionField::Host, false, cx,
+                                                    )))
+                                                    .child(div().w(px(self.tokens.metrics.form_port_width)).child(
+                                                        self.render_connection_field(
+                                                            self.i18n.t("ssh.form.port"), &form.port,
                                                             SSH_DEFAULT_PORT_TEXT.to_string(),
-                                                            NewConnectionField::Port,
-                                                            false,
-                                                            cx,
-                                                        )),
-                                                ),
-                                        )
-                                        .child(self.render_connection_field(
-                                            self.i18n.t("ssh.form.username"),
-                                            &form.username,
-                                            "root".to_string(),
-                                            NewConnectionField::Username,
-                                            false,
-                                            cx,
-                                        ))
+                                                            NewConnectionField::Port, false, cx,
+                                                        ),
+                                                    )))
+                                                .child(self.render_connection_field(
+                                                    self.i18n.t("ssh.form.username"), &form.username,
+                                                    "root".to_string(), NewConnectionField::Username,
+                                                    false, cx,
+                                                ))
+                                        })
+                                })
+                                .when(nova_mode && prompt_mode, |content| {
+                                    content.child(self.render_connection_field(
+                                        "Agent 2FA 验证码".to_string(),
+                                        &form.nova_two_factor_code,
+                                        "当前 6 位验证码；仅用于本次连接".to_string(),
+                                        NewConnectionField::NovaTwoFactorCode,
+                                        true,
+                                        cx,
+                                    ))
                                 })
                                 .when(drill_down_mode, |content| {
                                     content
@@ -332,21 +360,13 @@ impl WorkspaceApp {
                                         content.child(self.render_prompt_error_box(error))
                                     },
                                 )
-                                .child(self.render_auth_selector(
+                                .when(!nova_mode, |content| content.child(self.render_auth_selector(
                                     form.auth_tab,
-                                    if prompt_mode {
-                                        AuthSelectorContext::Prompt
-                                    } else if drill_down_mode {
-                                        AuthSelectorContext::DrillDown
-                                    } else if mode == NewConnectionFormMode::EditProperties {
-                                        AuthSelectorContext::EditProperties
-                                    } else {
-                                        AuthSelectorContext::Standard
-                                    },
+                                    if prompt_mode { AuthSelectorContext::Prompt } else if drill_down_mode { AuthSelectorContext::DrillDown } else if mode == NewConnectionFormMode::EditProperties { AuthSelectorContext::EditProperties } else { AuthSelectorContext::Standard },
                                     false,
                                     cx,
-                                ))
-                                .when(form.auth_tab == SshAuthTab::Password, |content| {
+                                )))
+                                .when(!nova_mode && form.auth_tab == SshAuthTab::Password, |content| {
                                     if edit_properties_mode
                                         && form.saved_password_keychain_id.is_some()
                                     {
@@ -417,7 +437,7 @@ impl WorkspaceApp {
                                     }
                                 })
                                 .when(
-                                    form.auth_tab == SshAuthTab::DefaultKey
+                                    !nova_mode && form.auth_tab == SshAuthTab::DefaultKey
                                         && !prompt_mode
                                         && !edit_properties_mode,
                                     |content| {
@@ -436,9 +456,9 @@ impl WorkspaceApp {
                                     },
                                 )
                                 .when(
-                                    form.auth_tab == SshAuthTab::SshKey
+                                    !nova_mode && (form.auth_tab == SshAuthTab::SshKey
                                         || ((prompt_mode || edit_properties_mode)
-                                            && form.auth_tab == SshAuthTab::DefaultKey),
+                                            && form.auth_tab == SshAuthTab::DefaultKey)),
                                     |content| {
                                         let key_label = if drill_down_mode {
                                             self.i18n.t("ssh.drill_down.key_path")
@@ -493,7 +513,7 @@ impl WorkspaceApp {
                                             })
                                     },
                                 )
-                                .when(form.auth_tab == SshAuthTab::ManagedKey, |content| {
+                                .when(!nova_mode && form.auth_tab == SshAuthTab::ManagedKey, |content| {
                                     content
                                         .child(self.render_managed_key_select(
                                             self.i18n.t("ssh.form.managed_key"),
@@ -513,7 +533,7 @@ impl WorkspaceApp {
                                             self.i18n.t("ssh.form.managed_key_hint"),
                                         ))
                                 })
-                                .when(form.auth_tab == SshAuthTab::Certificate, |content| {
+                                .when(!nova_mode && form.auth_tab == SshAuthTab::Certificate, |content| {
                                     let content = if prompt_mode {
                                         content
                                     } else {
@@ -574,7 +594,7 @@ impl WorkspaceApp {
                                             ))
                                         })
                                 })
-                                .when(form.auth_tab == SshAuthTab::Agent, |content| {
+                                .when(!nova_mode && form.auth_tab == SshAuthTab::Agent, |content| {
                                     let content = content
                                         .child(self.render_connection_hint(if drill_down_mode {
                                             self.i18n.t("ssh.drill_down.agent_desc")
@@ -599,7 +619,8 @@ impl WorkspaceApp {
                                     }
                                 })
                                 .when(
-                                    form.auth_tab == SshAuthTab::TwoFactor
+                                    !nova_mode
+                                        && form.auth_tab == SshAuthTab::TwoFactor
                                         && !prompt_mode
                                         && !edit_properties_mode,
                                     |content| {
@@ -616,7 +637,7 @@ impl WorkspaceApp {
                                             ))
                                     },
                                 )
-                                .when(!drill_down_mode, |content| {
+                                .when(!nova_mode && !drill_down_mode, |content| {
                                     content.child(self.render_connection_group_select(
                                         if edit_properties_mode {
                                             self.i18n.t("sessionManager.edit_properties.group")
@@ -627,7 +648,7 @@ impl WorkspaceApp {
                                         cx,
                                     ))
                                 })
-                                .when(edit_properties_mode, |content| {
+                                .when(!nova_mode && edit_properties_mode, |content| {
                                     content
                                         .child(self.render_connection_field(
                                             self.i18n.t("ssh.form.post_connect_command"),
@@ -650,7 +671,7 @@ impl WorkspaceApp {
                                         ))
                                         .child(self.render_edit_color_field(&form.color, cx))
                                 })
-                                .when(!prompt_mode && !edit_properties_mode, |content| {
+                                .when(!nova_mode && !prompt_mode && !edit_properties_mode, |content| {
                                     content
                                         .child(
                                             div()
@@ -843,6 +864,7 @@ impl WorkspaceApp {
                             !edit_properties_mode
                                 && self.saved_connection_prompt_action.is_none()
                                 && !drill_down_mode
+                                && !nova_mode
                                 && ssh_submission_mode,
                             |footer| {
                                 footer.child(self.render_connection_button(
@@ -858,7 +880,8 @@ impl WorkspaceApp {
                             !edit_properties_mode
                                 && self.saved_connection_prompt_action.is_none()
                                 && !remote_desktop_mode
-                                && !wsl_graphics_mode,
+                                && !wsl_graphics_mode
+                                && !nova_mode,
                             |footer| {
                                 footer
                                     .child(self.render_connection_button(
@@ -895,6 +918,13 @@ impl WorkspaceApp {
                                         cx,
                                     ))
                             },
+                        )
+                        .when(
+                            nova_mode && !edit_properties_mode && self.saved_connection_prompt_action.is_none(),
+                            |footer| footer.child(self.render_connection_button(
+                                if form.pending { "连接中…".to_string() } else { "保存并连接".to_string() },
+                                true, ConnectionButtonAction::Connect, primary_disabled, cx,
+                            )),
                         )
                         .when(
                             edit_properties_mode

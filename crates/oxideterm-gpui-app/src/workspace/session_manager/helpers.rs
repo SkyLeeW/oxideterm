@@ -1,4 +1,5 @@
 use super::*;
+use oxideterm_ssh::NovaSshAccessBundle;
 
 pub(super) fn auth_label(auth_type: AuthType) -> String {
     match auth_type {
@@ -332,6 +333,7 @@ pub(in crate::workspace) fn form_from_saved_connection(
     let upstream_proxy_form = upstream_proxy_form_fields(&conn.upstream_proxy);
     NewConnectionForm {
         name: conn.name.clone(),
+        nova_saved_access: conn.options.nova_agent.clone(),
         host: conn.host.clone(),
         port: conn.port.to_string(),
         username: conn.username.clone(),
@@ -465,6 +467,19 @@ pub(in crate::workspace) fn save_request_from_form_with_existing_auth(
 ) -> anyhow::Result<SaveConnectionRequest> {
     let mut request = save_request_from_draft(connection_draft_from_form(form), id, existing_auth)?;
     request.upstream_proxy = saved_upstream_proxy_policy_from_form(form)?;
+    if !form.nova_access_text.trim().is_empty() {
+        let bundle = NovaSshAccessBundle::parse(&form.nova_access_text)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let pinned_certificate_der = bundle
+            .pinned_cert_der
+            .ok_or_else(|| anyhow::anyhow!("Nova SSH 接入串缺少 Agent 钉扎证书"))?;
+        // 保存记录仅保留桥接地址、接入标识与公开证书，私钥、口令和 2FA 均不会写入配置。
+        request.nova_agent = Some(oxideterm_connections::NovaAgentConnection {
+            base_url: bundle.base_url.as_str().trim_end_matches('/').to_string(),
+            access_id: bundle.access_id,
+            pinned_certificate_der,
+        });
+    }
     Ok(request)
 }
 

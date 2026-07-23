@@ -16,6 +16,7 @@ use russh::{
     keys::{PublicKey, PublicKeyBase64, parse_public_key_base64, ssh_key::HashAlg},
 };
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -633,6 +634,42 @@ pub async fn check_host_key_via_stream(
     stream: russh::ChannelStream<client::Msg>,
     timeout_secs: u64,
 ) -> HostKeyStatus {
+    check_host_key_via_io_stream(host, port, stream, timeout_secs).await
+}
+
+/// check_host_key_via_websocket_tunnel 通过 Agent WSS 字节流执行真实 SSH 主机密钥预检。
+pub async fn check_host_key_via_websocket_tunnel(
+    host: &str,
+    port: u16,
+    tunnel: &crate::WebSocketSshTunnel,
+    timeout_secs: u64,
+) -> HostKeyStatus {
+    let stream =
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), tunnel.connect()).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(error)) => {
+                return HostKeyStatus::Error {
+                    message: error.to_string(),
+                };
+            }
+            Err(_) => {
+                return HostKeyStatus::Error {
+                    message: format!("SSH-over-WSS 桥接建立超时（{timeout_secs} 秒）"),
+                };
+            }
+        };
+    check_host_key_via_io_stream(host, port, stream, timeout_secs).await
+}
+
+async fn check_host_key_via_io_stream<S>(
+    host: &str,
+    port: u16,
+    stream: S,
+    timeout_secs: u64,
+) -> HostKeyStatus
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     if HOST_KEY_CACHE.get_verified(host, port).is_some() {
         return HostKeyStatus::Verified;
     }

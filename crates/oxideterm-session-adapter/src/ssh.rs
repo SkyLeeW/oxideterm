@@ -15,6 +15,10 @@ pub fn ssh_config_from_saved_connection(
     settings: &PersistedSettings,
     conn: &SavedConnection,
 ) -> Option<SshConfig> {
+    // Nova 节点必须先由桌面端收集新的 2FA，再换取一次性 WSS bridge token。
+    if conn.options.nova_agent.is_some() {
+        return None;
+    }
     let auth = auth_method_from_saved_auth(store, &conn.auth)?;
     let proxy_chain = proxy_chain_config_from_saved_connection(store, conn)?;
     let proxy_command = proxy_command_from_imported_ssh_config(settings, conn);

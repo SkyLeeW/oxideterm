@@ -62,6 +62,7 @@ mod tests {
                 agent_forwarding: true,
                 legacy_ssh_compatibility: false,
                 post_connect_command: None,
+                nova_agent: None,
             },
             created_at: Utc::now(),
             last_used_at: None,

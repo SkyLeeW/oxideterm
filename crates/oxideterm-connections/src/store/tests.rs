@@ -31,6 +31,7 @@ mod tests {
             agent_forwarding: false,
             legacy_ssh_compatibility: false,
             post_connect_command: None,
+            nova_agent: None,
         }
     }
 
@@ -1499,6 +1500,7 @@ mod tests {
             agent_forwarding: true,
             legacy_ssh_compatibility: true,
             post_connect_command: Some("uname -a".to_string()),
+            nova_agent: None,
         };
         source.save().unwrap();
 
@@ -1776,6 +1778,58 @@ mod tests {
                 .unwrap()
                 .contains("PRIVATE KEY")
         );
+    }
+
+    #[test]
+    fn nova_saved_connection_persists_only_bridge_metadata() {
+        let path = temp_store_path("nova-saved-connection");
+        let mut store = ConnectionStore::load(path.clone()).unwrap();
+        let mut save = request("nova-connection", SavedAuth::Agent);
+        save.nova_agent = Some(NovaAgentConnection {
+            base_url: "https://agent.example:28443".to_string(),
+            access_id: "access-1".to_string(),
+            pinned_certificate_der: vec![1, 2, 3],
+        });
+
+        store.upsert(save).unwrap();
+
+        let saved = store.get("nova-connection").unwrap();
+        assert_eq!(
+            saved
+                .options
+                .nova_agent
+                .as_ref()
+                .map(|access| access.base_url.as_str()),
+            Some("https://agent.example:28443")
+        );
+        let serialized = fs::read_to_string(path).unwrap();
+        assert!(!serialized.contains("two_factor_code"));
+        assert!(!serialized.contains("private_key"));
+        assert!(!serialized.contains("wss_token"));
+    }
+
+    #[test]
+    fn ensure_managed_key_reuses_matching_public_key_fingerprint() {
+        let mut store = load_empty_store("managed-key-ensure-reuse");
+        let private_key = generated_private_key_text(Some("managed-key-passphrase"));
+        let first = store
+            .create_managed_ssh_key_from_text(
+                SecretString::from(private_key.clone()),
+                Some("首次导入".to_string()),
+                Some(SecretString::from("managed-key-passphrase")),
+            )
+            .unwrap();
+
+        let reused = store
+            .ensure_managed_ssh_key_from_text(
+                SecretString::from(private_key),
+                Some("重复导入".to_string()),
+                Some(SecretString::from("managed-key-passphrase")),
+            )
+            .unwrap();
+
+        assert_eq!(reused.id, first.id);
+        assert_eq!(store.managed_ssh_keys().len(), 1);
     }
 
     #[test]

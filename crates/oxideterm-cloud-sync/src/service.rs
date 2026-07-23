@@ -654,6 +654,7 @@ mod tests {
                 agent_forwarding: false,
                 legacy_ssh_compatibility: false,
                 post_connect_command: None,
+                nova_agent: None,
             })
             .unwrap();
         let connections_snapshot = source.export_saved_connections_snapshot().unwrap();

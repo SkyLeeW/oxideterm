@@ -21,15 +21,16 @@ use oxideterm_ssh::{
     KeyboardInteractivePromptRequest, KeyboardInteractiveResponses, NodeId, NodeReadiness,
     NodeTreeExpansion, ProxyHopConfig, SshConfig, SshPromptError, SshPromptHandler,
     SshTransportClient, UpstreamProxyAuth, UpstreamProxyProtocol,
-    check_host_key_with_upstream_proxy,
+    check_host_key_via_websocket_tunnel, check_host_key_with_upstream_proxy,
 };
 use tokio::sync::oneshot;
 
 use super::{
     form_state::{
-        NewConnectionForm, NewConnectionFormMode, NewConnectionProxyHop, NewConnectionSubmitAction,
-        NewConnectionTransport, NewConnectionUpstreamProxyAuth, NewConnectionUpstreamProxyPolicy,
-        SavedConnectionPromptAction, SshAuthTab, new_connection_form_mode,
+        NewConnectionField, NewConnectionForm, NewConnectionFormMode, NewConnectionProxyHop,
+        NewConnectionSubmitAction, NewConnectionTransport, NewConnectionUpstreamProxyAuth,
+        NewConnectionUpstreamProxyPolicy, SavedConnectionPromptAction, SshAuthTab,
+        new_connection_form_mode,
     },
     host_key_dialog::HostKeyChallenge,
     session_tree_plan::{
