@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import os
 import plistlib
@@ -1451,9 +1452,20 @@ cp -a \"{payload_path}/.\" %{{buildroot}}/
     shutil.rmtree(rpm_root)
 
 
+def parse_arguments() -> argparse.Namespace:
+    """解析目标平台与仅生成 Windows 安装包的发布参数。"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("target", nargs="?")
+    parser.add_argument("--windows-installer-only", action="store_true")
+    return parser.parse_args()
+
+
 def main() -> None:
-    target_was_explicit = len(sys.argv) > 1 and sys.argv[1] != ""
-    target = sys.argv[1] if target_was_explicit else host_triple()
+    arguments = parse_arguments()
+    target_was_explicit = arguments.target is not None and arguments.target != ""
+    target = arguments.target if target_was_explicit else host_triple()
+    if arguments.windows_installer_only and "windows" not in target:
+        raise RuntimeError("--windows-installer-only 仅支持 Windows 目标平台")
     raw_version = raw_release_version()
     version = normalized_version(raw_version)
     validate_release_version(raw_version, version)
@@ -1479,9 +1491,8 @@ def main() -> None:
         create_windows_installer(app_binary, target, target_was_explicit, version, label, identity)
     if "apple-darwin" in target:
         sign_macos_path(app_binary)
-    # Every target should publish a self-contained portable artifact; Windows
-    # additionally ships an NSIS installer for users who prefer installation.
-    create_portable_package(app_binary, target, version, label)
+    if not arguments.windows_installer_only:
+        create_portable_package(app_binary, target, version, label)
     if "apple-darwin" in target:
         create_macos_app(app_binary, target, version, label, identity)
     if "linux" in target:

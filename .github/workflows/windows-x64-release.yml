@@ -1,0 +1,150 @@
+name: Windows x64 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '必须与 Cargo.toml 中的工作区版本完全一致，例如 2.0.9'
+        required: true
+        type: string
+      publish_release:
+        description: '创建并发布 GitHub Release；关闭时仅保留工作流安装包'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-x64-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build Windows x64 installer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate release version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $workspaceVersion = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
+          if ($env:RELEASE_VERSION -ne $workspaceVersion) {
+            throw "发布版本 $env:RELEASE_VERSION 与 Cargo.toml 版本 $workspaceVersion 不一致。"
+          }
+
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # v4
+        with:
+          toolchain: 1.94.1
+          targets: x86_64-pc-windows-msvc
+
+      - name: Restore Rust cache
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: windows-x64-installer
+          cache-on-failure: false
+
+      - name: Install NSIS
+        shell: pwsh
+        env:
+          NSIS_VERSION: '3.12'
+          NSIS_ARCHIVE_SHA256: '56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f'
+        run: |
+          $archivePath = Join-Path $env:RUNNER_TEMP "nsis-$env:NSIS_VERSION.zip"
+          $downloadUrl = "https://downloads.sourceforge.net/project/nsis/NSIS%203/$env:NSIS_VERSION/nsis-$env:NSIS_VERSION.zip"
+          curl.exe --fail --location --retry 3 --retry-all-errors --output $archivePath $downloadUrl
+          $archiveHash = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash.ToLowerInvariant()
+          if ($archiveHash -ne $env:NSIS_ARCHIVE_SHA256) {
+            throw "NSIS 压缩包校验和不匹配：$archiveHash"
+          }
+          $extractRoot = Join-Path $env:RUNNER_TEMP "nsis-$env:NSIS_VERSION-portable"
+          Expand-Archive -Path $archivePath -DestinationPath $extractRoot -Force
+          $nsisBin = Join-Path $extractRoot "nsis-$env:NSIS_VERSION"
+          if (-not (Test-Path (Join-Path $nsisBin 'makensis.exe'))) {
+            throw '验证后的 NSIS 压缩包中未找到 makensis.exe。'
+          }
+          $nsisBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+            throw 'GitHub Windows 运行器中未找到 7-Zip。'
+          }
+
+      - name: Import Windows signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_SIGN_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGN_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGN_CERTIFICATE_BASE64)) {
+            Write-Host '未配置 Windows 签名证书，将生成未签名安装包。'
+            exit 0
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'oxideterm-signing.pfx'
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_SIGN_CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_SIGN_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $certificatePath -Force
+          "WINDOWS_SIGN_CERT_SHA1=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build NSIS installer
+        env:
+          OXIDETERM_VERSION: ${{ inputs.version }}
+        run: python scripts/release/package_native.py x86_64-pc-windows-msvc --windows-installer-only
+
+      - name: Verify NSIS installer
+        run: >-
+          python scripts/release/verify_native_package.py
+          --target x86_64-pc-windows-msvc
+          --version ${{ inputs.version }}
+          --dist dist
+          --windows-installer-only
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: OxideTerm-windows-x64-installer
+          path: dist/*-setup.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish Windows x64 installer
+    needs: package
+    if: inputs.publish_release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installer artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: OxideTerm-windows-x64-installer
+          path: dist-release
+
+      - name: Generate installer checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer="$(find dist-release -maxdepth 1 -type f -name '*-setup.exe' -print -quit)"
+          test -n "${installer}"
+          (cd dist-release && sha256sum "$(basename "${installer}")" > sha256sums.txt)
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: native-v${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: OxideTerm Windows x64 ${{ inputs.version }}
+          prerelease: ${{ contains(inputs.version, '-') }}
+          make_latest: ${{ !contains(inputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            dist-release/*-setup.exe
+            dist-release/sha256sums.txt

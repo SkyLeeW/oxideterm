@@ -50,10 +50,14 @@ def target_label(target: str) -> str:
     return labels[target]
 
 
-def expected_artifact_names(target: str, version: str) -> set[str]:
+def expected_artifact_names(
+    target: str, version: str, windows_installer_only: bool = False
+) -> set[str]:
     label = target_label(target)
     names = {f"OxideTerm_{version}_{label}_portable"}
     if "windows" in target:
+        if windows_installer_only:
+            return {f"OxideTerm_{version}_{label}-setup.exe"}
         return {
             f"OxideTerm_{version}_{label}-setup.exe",
             f"OxideTerm_{version}_{label}_portable.zip",
@@ -292,7 +296,24 @@ def verify_appimage(path: Path, expected_version: str) -> None:
             raise RuntimeError(f"{path.name} does not contain version {expected_version}")
 
 
-def verify_windows_installer(path: Path, expected_version: str) -> None:
+def verify_windows_binary_architecture(path: Path, target: str) -> None:
+    """校验从安装包提取出的 Windows 可执行文件与目标架构一致。"""
+    data = path.read_bytes()
+    if len(data) < 64 or data[:2] != b"MZ":
+        raise RuntimeError(f"{path.name} is not a Windows PE executable")
+    pe_offset = int.from_bytes(data[60:64], "little")
+    if len(data) < pe_offset + 6 or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+        raise RuntimeError(f"{path.name} has an invalid PE header")
+    machine = int.from_bytes(data[pe_offset + 4 : pe_offset + 6], "little")
+    expected_machine = {
+        "x86_64-pc-windows-msvc": 0x8664,
+        "aarch64-pc-windows-msvc": 0xAA64,
+    }[target]
+    if machine != expected_machine:
+        raise RuntimeError(f"{path.name} does not match {target}")
+
+
+def verify_windows_installer(path: Path, expected_version: str, target: str) -> None:
     seven_zip = next((shutil.which(name) for name in ("7z", "7zz", "7za") if shutil.which(name)), None)
     if not seven_zip:
         raise RuntimeError("7-Zip is required for NSIS content verification")
@@ -309,11 +330,19 @@ def verify_windows_installer(path: Path, expected_version: str) -> None:
         versions = list(Path(directory).rglob(PACKAGE_VERSION_FILENAME))
         if not versions or all(item.read_text(encoding="utf-8").strip() != expected_version for item in versions):
             raise RuntimeError(f"{path.name} does not contain version {expected_version}")
+        binaries = list(Path(directory).rglob("oxideterm-native.exe"))
+        if len(binaries) != 1:
+            raise RuntimeError(f"expected one oxideterm-native.exe in {path.name}")
+        verify_windows_binary_architecture(binaries[0], target)
 
 
-def verify_release(dist: Path, target: str, version: str) -> dict[str, object]:
+def verify_release(
+    dist: Path, target: str, version: str, windows_installer_only: bool = False
+) -> dict[str, object]:
     version = normalized_version(version)
-    expected = expected_artifact_names(target, version)
+    if windows_installer_only and "windows" not in target:
+        raise RuntimeError("--windows-installer-only is valid only for Windows targets")
+    expected = expected_artifact_names(target, version, windows_installer_only)
     missing = sorted(name for name in expected if not (dist / name).is_file())
     if missing:
         raise RuntimeError(f"missing release artifacts: {', '.join(missing)}")
@@ -322,21 +351,24 @@ def verify_release(dist: Path, target: str, version: str) -> dict[str, object]:
         raise RuntimeError(f"empty release artifacts: {', '.join(empty)}")
 
     label = target_label(target)
-    portable_name = (
-        f"OxideTerm_{version}_{label}_portable.zip"
-        if "windows" in target
-        else f"OxideTerm_{version}_{label}_portable.tar.gz"
-    )
-    portable_path = dist / portable_name
-    verify_portable_archive(portable_path, target, version)
-    with tempfile.TemporaryDirectory() as directory:
-        binary = extract_portable_binary(portable_path, target, Path(directory))
-        verify_binary_architecture(binary, target)
-        if "linux" in target:
-            verify_linux_dynamic_libraries(binary)
+    if not windows_installer_only:
+        portable_name = (
+            f"OxideTerm_{version}_{label}_portable.zip"
+            if "windows" in target
+            else f"OxideTerm_{version}_{label}_portable.tar.gz"
+        )
+        portable_path = dist / portable_name
+        verify_portable_archive(portable_path, target, version)
+        with tempfile.TemporaryDirectory() as directory:
+            binary = extract_portable_binary(portable_path, target, Path(directory))
+            verify_binary_architecture(binary, target)
+            if "linux" in target:
+                verify_linux_dynamic_libraries(binary)
 
     if "windows" in target:
-        verify_windows_installer(dist / f"OxideTerm_{version}_{label}-setup.exe", version)
+        verify_windows_installer(
+            dist / f"OxideTerm_{version}_{label}-setup.exe", version, target
+        )
     elif "apple-darwin" in target:
         verify_macos_app_zip(dist / f"OxideTerm_{version}_{label}.app.zip", version)
         legacy_archive = dist / f"OxideTerm_{version}_{label}.app.tar.gz"
@@ -355,9 +387,15 @@ def main() -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--dist", type=Path, default=Path("dist"))
+    parser.add_argument("--windows-installer-only", action="store_true")
     args = parser.parse_args()
     try:
-        summary = verify_release(args.dist, args.target, args.version)
+        summary = verify_release(
+            args.dist,
+            args.target,
+            args.version,
+            args.windows_installer_only,
+        )
     except Exception as error:
         print(json.dumps({"status": "error", "error": str(error)}, ensure_ascii=True))
         return 1
