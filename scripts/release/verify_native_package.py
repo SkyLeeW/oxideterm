@@ -331,9 +331,10 @@ def verify_windows_installer(path: Path, expected_version: str, target: str) -> 
         if not versions or all(item.read_text(encoding="utf-8").strip() != expected_version for item in versions):
             raise RuntimeError(f"{path.name} does not contain version {expected_version}")
         binaries = list(Path(directory).rglob("oxideterm-native.exe"))
-        if len(binaries) != 1:
-            raise RuntimeError(f"expected one oxideterm-native.exe in {path.name}")
-        verify_windows_binary_architecture(binaries[0], target)
+        if not binaries:
+            raise RuntimeError(f"{path.name} does not contain oxideterm-native.exe")
+        for binary in binaries:
+            verify_windows_binary_architecture(binary, target)
 
 
 def verify_release(
